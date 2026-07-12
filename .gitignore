@@ -1,55 +1,58 @@
 HELP.md
-target/
-!.mvn/wrapper/maven-wrapper.jar
-!**/src/main/**/target/
-!**/src/test/**/target/
+
+### Maven / build ###
+**/target/
+!**/.mvn/wrapper/maven-wrapper.jar
+*.log
 
 ### STS ###
 .apt_generated
 .classpath
 .factorypath
 .project
-.settings
+.settings/
 .springBeans
-.sts4-cache
+.sts4-cache/
 
 ### IntelliJ IDEA ###
-.idea
+.idea/
 *.iws
 *.iml
 *.ipr
 
 ### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-build/
+**/nbproject/private/
+**/nbbuild/
+**/dist/
+**/nbdist/
+.nb-gradle/
+**/build/
 !**/src/main/**/build/
 !**/src/test/**/build/
 
 ### VS Code ###
 .vscode/
 
-### Secretos locales (no entregar) ###
+### Secretos locales ###
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 application-local.properties
 application-local.yml
+**/Wallet_DUOCUC/
+**/wallet/
 
-### Maven / build ###
-target/jacoco.exec
-*.log
+### EFS local ###
+**/efs-data/*
+!**/efs-data/.gitkeep
 
-### EFS local (archivos generados en runtime) ###
-efs-data/*
-!efs-data/.gitkeep
+### Docker local ###
+docker-compose.override.yml
 
-### Documentacion del curso (no incluir en repo) ###
+### Sistema operativo ###
+.DS_Store
+Thumbs.db
+
+### Documentación del curso ###
 *.pdf
 *.docx
-
-
-**/Wallet_DUOCUC/
