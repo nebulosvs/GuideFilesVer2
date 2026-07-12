@@ -1,0 +1,55 @@
+HELP.md
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+### Secretos locales (no entregar) ###
+.env
+.env.local
+.env.*.local
+application-local.properties
+application-local.yml
+
+### Maven / build ###
+target/jacoco.exec
+*.log
+
+### EFS local (archivos generados en runtime) ###
+efs-data/*
+!efs-data/.gitkeep
+
+### Documentacion del curso (no incluir en repo) ###
+*.pdf
+*.docx
+
+
+**/Wallet_DUOCUC/

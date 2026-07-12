@@ -1,0 +1,164 @@
+name: Build and Deploy Microservices
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bdget-production
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: "maven"
+          cache-dependency-path: |
+            bdget-producer/pom.xml
+            bdget-consumer/pom.xml
+
+      - name: Build producer with Maven
+        working-directory: bdget-producer
+        run: |
+          chmod +x mvnw
+          ./mvnw clean package -DskipTests
+
+      - name: Build consumer with Maven
+        working-directory: bdget-consumer
+        run: |
+          chmod +x mvnw
+          ./mvnw clean package -DskipTests
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build producer image
+        run: |
+          docker build \
+            -t "${{ secrets.DOCKERHUB_USERNAME }}/bdget-producer:latest" \
+            ./bdget-producer
+
+      - name: Build consumer image
+        run: |
+          docker build \
+            -t "${{ secrets.DOCKERHUB_USERNAME }}/bdget-consumer:latest" \
+            ./bdget-consumer
+
+      - name: Push producer image
+        run: |
+          docker push \
+            "${{ secrets.DOCKERHUB_USERNAME }}/bdget-producer:latest"
+
+      - name: Push consumer image
+        run: |
+          docker push \
+            "${{ secrets.DOCKERHUB_USERNAME }}/bdget-consumer:latest"
+
+      - name: Configure SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Create deployment environment file
+        shell: bash
+        run: |
+          {
+            printf 'DOCKERHUB_USERNAME=%s\n' \
+              "${{ secrets.DOCKERHUB_USERNAME }}"
+
+            printf 'SPRING_DATASOURCE_URL=%s\n' \
+              "${{ secrets.SPRING_DATASOURCE_URL }}"
+            printf 'SPRING_DATASOURCE_USERNAME=%s\n' \
+              "${{ secrets.SPRING_DATASOURCE_USERNAME }}"
+            printf 'SPRING_DATASOURCE_PASSWORD=%s\n' \
+              "${{ secrets.SPRING_DATASOURCE_PASSWORD }}"
+
+            printf 'SPRING_RABBITMQ_USERNAME=%s\n' \
+              "${{ secrets.SPRING_RABBITMQ_USERNAME }}"
+            printf 'SPRING_RABBITMQ_PASSWORD=%s\n' \
+              "${{ secrets.SPRING_RABBITMQ_PASSWORD }}"
+
+            printf 'AWS_ACCESS_KEY_ID=%s\n' \
+              "${{ secrets.AWS_ACCESS_KEY_ID }}"
+            printf 'AWS_SECRET_ACCESS_KEY=%s\n' \
+              "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+            printf 'AWS_SESSION_TOKEN=%s\n' \
+              "${{ secrets.AWS_SESSION_TOKEN }}"
+            printf 'AWS_REGION=%s\n' \
+              "${{ secrets.AWS_REGION }}"
+            printf 'AWS_S3_BUCKET_NAME=%s\n' \
+              "${{ secrets.AWS_S3_BUCKET_NAME }}"
+          } > deployment.env
+
+          chmod 600 deployment.env
+
+      - name: Create deployment directory on EC2
+        run: |
+          ssh \
+            -i ~/.ssh/id_rsa \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "${{ secrets.USER_SERVER }}@${{ secrets.EC2_HOST }}" \
+            "mkdir -p /home/ec2-user/guias-despacho"
+
+      - name: Copy Compose file to EC2
+        run: |
+          scp \
+            -i ~/.ssh/id_rsa \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            docker-compose.prod.yml \
+            "${{ secrets.USER_SERVER }}@${{ secrets.EC2_HOST }}:/home/ec2-user/guias-despacho/docker-compose.yml"
+
+      - name: Copy environment file to EC2
+        run: |
+          scp \
+            -i ~/.ssh/id_rsa \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            deployment.env \
+            "${{ secrets.USER_SERVER }}@${{ secrets.EC2_HOST }}:/home/ec2-user/guias-despacho/.env"
+
+      - name: Deploy with Docker Compose
+        run: |
+          ssh \
+            -i ~/.ssh/id_rsa \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "${{ secrets.USER_SERVER }}@${{ secrets.EC2_HOST }}" << 'EOF'
+              set -e
+
+              cd /home/ec2-user/guias-despacho
+
+              chmod 600 .env
+
+              echo '${{ secrets.DOCKERHUB_TOKEN }}' |
+                docker login \
+                  -u '${{ secrets.DOCKERHUB_USERNAME }}' \
+                  --password-stdin
+
+              docker compose pull
+              docker compose up -d --remove-orphans
+
+              docker image prune -f
+
+              echo "Estado de los contenedores:"
+              docker compose ps
+          EOF

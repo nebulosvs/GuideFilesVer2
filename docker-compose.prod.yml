@@ -1,0 +1,97 @@
+services:
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    restart: always
+
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+    environment:
+      RABBITMQ_DEFAULT_USER: ${SPRING_RABBITMQ_USERNAME}
+      RABBITMQ_DEFAULT_PASS: ${SPRING_RABBITMQ_PASSWORD}
+
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+
+  productor:
+    image: ${DOCKERHUB_USERNAME}/bdget-producer:latest
+    container_name: bdget-productor
+    restart: always
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+    ports:
+      - "8080:8080"
+
+    volumes:
+      - /home/ec2-user/efs:/app/efs
+      - /home/ec2-user/Wallet_DUOCUC:/app/wallet:ro
+
+    environment:
+      EFS_BASE_PATH: /app/efs
+
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${SPRING_RABBITMQ_USERNAME}
+      SPRING_RABBITMQ_PASSWORD: ${SPRING_RABBITMQ_PASSWORD}
+
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      AWS_REGION: ${AWS_REGION}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+
+
+  consumidor:
+    image: ${DOCKERHUB_USERNAME}/bdget-consumer:latest
+    container_name: bdget-consumer
+    restart: always
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+    ports:
+      - "8081:8081"
+
+    volumes:
+      - /home/ec2-user/efs:/app/efs
+      - /home/ec2-user/Wallet_DUOCUC:/app/wallet:ro
+
+    environment:
+      EFS_BASE_PATH: /app/efs
+
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${SPRING_RABBITMQ_USERNAME}
+      SPRING_RABBITMQ_PASSWORD: ${SPRING_RABBITMQ_PASSWORD}
+
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      AWS_REGION: ${AWS_REGION}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+
+
+volumes:
+  rabbitmq-data:

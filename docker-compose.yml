@@ -1,0 +1,78 @@
+
+
+services:
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    restart: always
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+
+  productor:
+    build:
+      context: ./bdget-producer
+      dockerfile: Dockerfile
+    container_name: bdget-productor
+    depends_on:
+      - rabbitmq
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./bdget-producer/efs-data:/app/efs
+      - ./bdget-producer/Wallet_DUOCUC:/app/wallet:ro
+
+    environment:
+      - EFS_BASE_PATH=/app/efs
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME}
+      - SPRING_DATASOURCE_URL=${SPRING_DATASOURCE_URL}
+      - SPRING_DATASOURCE_USERNAME=${SPRING_DATASOURCE_USERNAME}
+      - SPRING_DATASOURCE_PASSWORD=${SPRING_DATASOURCE_PASSWORD}
+      - SPRING_RABBITMQ_HOST=rabbitmq
+      - SPRING_RABBITMQ_PORT=5672
+      - SPRING_RABBITMQ_USERNAME=admin
+      - SPRING_RABBITMQ_PASSWORD=admin123
+    restart: always
+
+  consumidor:
+    build:
+      context: ./bdget-consumer
+      dockerfile: Dockerfile
+    container_name: bdget-consumer
+    depends_on:
+      - rabbitmq
+    ports:
+      - "8081:8081"
+
+    volumes:
+    - ./bdget-producer/efs-data:/app/efs
+    - ./bdget-consumer/Wallet_DUOCUC:/app/wallet:ro
+
+    environment:
+
+      - EFS_BASE_PATH=/app/efs
+
+      - SPRING_DATASOURCE_URL=${SPRING_DATASOURCE_URL}
+      - SPRING_DATASOURCE_USERNAME=${SPRING_DATASOURCE_USERNAME}
+      - SPRING_DATASOURCE_PASSWORD=${SPRING_DATASOURCE_PASSWORD}
+
+      - SPRING_RABBITMQ_HOST=rabbitmq
+      - SPRING_RABBITMQ_PORT=5672
+      - SPRING_RABBITMQ_USERNAME=admin
+      - SPRING_RABBITMQ_PASSWORD=admin123
+
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME}
+      
+    restart: always

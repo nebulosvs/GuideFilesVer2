@@ -1,0 +1,12 @@
+target/
+.git/
+.idea/
+.vscode/
+*.iml
+.env
+.env.*
+efs-data/
+postman/
+*.pdf
+*.docx
+run-local.ps1
