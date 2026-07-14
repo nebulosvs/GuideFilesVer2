@@ -3,7 +3,9 @@ package com.example.bdgetproducer.service;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,10 +61,11 @@ public class DispatchGuideServiceImpl implements DispatchGuideService {
         guide.setDescripcion(request.getDescripcion());
 
         /*
-         * Valor temporal para evitar insertar un NULL
-         * antes de conocer el ID de la guía.
+         * Se asigna un nombre temporal porque todavía
+         * no conocemos el ID generado por Oracle.
          */
         guide.setFileName("PENDIENTE");
+        guide.setUploadedToS3(false);
 
         guide = dispatchGuideRepository.save(guide);
 
@@ -85,11 +88,6 @@ public class DispatchGuideServiceImpl implements DispatchGuideService {
         guide.setS3Key(
                 guideFileService.buildS3Key(guide)
         );
-
-        /*
-         * El consumidor es quien hará la subida automática.
-         */
-        guide.setUploadedToS3(false);
 
         guide = dispatchGuideRepository.save(guide);
 
@@ -145,15 +143,11 @@ public class DispatchGuideServiceImpl implements DispatchGuideService {
         );
 
         /*
-         * Primero se consulta directamente S3.
-         * Esto evita depender de uploadedToS3, ya que la subida
-         * automática la realiza el microservicio consumidor.
+         * Se comprueba directamente S3 porque el consumidor
+         * es quien realiza la subida automática y el campo
+         * uploadedToS3 podría estar desactualizado.
          */
-        if (canCheckS3(guide)
-                && awsService.objectExists(
-                        bucketName,
-                        guide.getS3Key())) {
-
+        if (existsInS3(guide)) {
             return awsService.downloadS3File(
                     bucketName,
                     guide.getS3Key()
@@ -161,9 +155,13 @@ public class DispatchGuideServiceImpl implements DispatchGuideService {
         }
 
         /*
-         * Si todavía no está en S3, se descarga desde EFS.
+         * Si todavía no está en S3, se intenta descargar
+         * desde el almacenamiento compartido EFS.
          */
-        if (!efsStorageService.fileExists(guide.getEfsPath())) {
+        if (guide.getEfsPath() == null
+                || guide.getEfsPath().isBlank()
+                || !efsStorageService.fileExists(guide.getEfsPath())) {
+
             throw new ResourceNotFoundException(
                     "La guía no fue encontrada en S3 ni en EFS."
             );
@@ -214,7 +212,7 @@ public class DispatchGuideServiceImpl implements DispatchGuideService {
                 guideFileService.generateGuideContent(guide);
 
         /*
-         * Siempre actualiza la copia compartida en EFS.
+         * Actualiza siempre la copia compartida en EFS.
          */
         efsStorageService.writeFile(
                 guide.getEfsPath(),
@@ -222,13 +220,10 @@ public class DispatchGuideServiceImpl implements DispatchGuideService {
         );
 
         /*
-         * Si el archivo realmente existe en S3,
-         * también se sobrescribe allí.
+         * Si el objeto existe realmente en S3,
+         * también se reemplaza en el bucket.
          */
-        if (canCheckS3(guide)
-                && awsService.objectExists(
-                        bucketName,
-                        guide.getS3Key())) {
+        if (existsInS3(guide)) {
 
             awsService.uploadFile(
                     bucketName,
@@ -259,14 +254,10 @@ public class DispatchGuideServiceImpl implements DispatchGuideService {
         );
 
         /*
-         * Elimina directamente desde S3 si el objeto existe,
-         * aunque uploadedToS3 esté desactualizado.
+         * Elimina el objeto actual de S3 sin depender
+         * del valor almacenado en uploadedToS3.
          */
-        if (canCheckS3(guide)
-                && awsService.objectExists(
-                        bucketName,
-                        guide.getS3Key())) {
-
+        if (existsInS3(guide)) {
             awsService.deleteObject(
                     bucketName,
                     guide.getS3Key()
@@ -274,7 +265,7 @@ public class DispatchGuideServiceImpl implements DispatchGuideService {
         }
 
         /*
-         * Elimina también el archivo compartido desde EFS.
+         * Elimina también el archivo de EFS.
          */
         if (guide.getEfsPath() != null
                 && !guide.getEfsPath().isBlank()) {
@@ -292,65 +283,111 @@ public class DispatchGuideServiceImpl implements DispatchGuideService {
             String transportista,
             LocalDate fecha) {
 
-        List<DispatchGuide> guides = new ArrayList<>();
+        validateBucketConfigured();
 
-        if (transportista != null
-                && !transportista.isBlank()
-                && fecha != null) {
+        String normalizedTransportista =
+                normalizeTransportista(transportista);
 
-            guides =
-                    dispatchGuideRepository
-                            .findByTransportistaAndFechaOrderByCreatedAtDesc(
-                                    transportista.trim(),
-                                    fecha
-                            );
+        /*
+         * Oracle entrega los metadatos de las guías.
+         */
+        List<DispatchGuide> databaseGuides =
+                findGuidesByFilters(
+                        normalizedTransportista,
+                        fecha
+                );
 
-        } else if (transportista != null
-                && !transportista.isBlank()) {
+        /*
+         * Se obtiene la lista actual de objetos del bucket.
+         *
+         * Cuando hay fecha, la estructura de carpetas permite
+         * limitar la consulta al prefijo yyyyMM/.
+         *
+         * Cuando no hay fecha, se consulta desde la raíz porque
+         * las claves tienen esta estructura:
+         *
+         * yyyyMM/transportista/guia{id}.txt
+         */
+        String s3Prefix = buildHistoryS3Prefix(fecha);
 
-            guides =
-                    dispatchGuideRepository
-                            .findByTransportistaOrderByCreatedAtDesc(
-                                    transportista.trim()
-                            );
-
-        } else if (fecha != null) {
-
-            guides =
-                    dispatchGuideRepository
-                            .findByFechaOrderByCreatedAtDesc(fecha);
-
-        } else {
-            guides = dispatchGuideRepository.findAll();
-        }
-
-        if (bucketName != null
-                && !bucketName.isBlank()
-                && transportista != null
-                && !transportista.isBlank()) {
-
-            String dateFolder =
-                    fecha != null
-                            ? fecha.format(DATE_FOLDER_FORMAT)
-                            : null;
-
-            String prefix =
-                    guideFileService.buildS3Prefix(
-                            transportista.trim(),
-                            dateFolder
-                    );
-
-            if (!prefix.isBlank()) {
+        List<String> currentS3Keys =
                 awsService.listS3Files(
                         bucketName,
-                        prefix
+                        s3Prefix
                 );
-            }
+
+        Set<String> currentS3KeySet =
+                currentS3Keys == null
+                        ? new HashSet<>()
+                        : new HashSet<>(currentS3Keys);
+
+        /*
+         * Solo se devuelven las guías que siguen existiendo
+         * actualmente en el bucket S3.
+         */
+        return databaseGuides.stream()
+                .filter(guide ->
+                        guide.getS3Key() != null
+                                && !guide.getS3Key().isBlank()
+                                && currentS3KeySet.contains(
+                                        guide.getS3Key()
+                                )
+                )
+                .map(guide -> toResponse(guide, true))
+                .collect(Collectors.toList());
+    }
+
+    private List<DispatchGuide> findGuidesByFilters(
+            String transportista,
+            LocalDate fecha) {
+
+        if (transportista != null && fecha != null) {
+
+            return dispatchGuideRepository
+                    .findByTransportistaAndFechaOrderByCreatedAtDesc(
+                            transportista,
+                            fecha
+                    );
         }
 
-        return guides.stream()
-                .map(this::toResponse)
-                .collect(Collectors.toList());
+        if (transportista != null) {
+
+            return dispatchGuideRepository
+                    .findByTransportistaOrderByCreatedAtDesc(
+                            transportista
+                    );
+        }
+
+        if (fecha != null) {
+
+            return dispatchGuideRepository
+                    .findByFechaOrderByCreatedAtDesc(fecha);
+        }
+
+        return new ArrayList<>(
+                dispatchGuideRepository.findAll()
+        );
+    }
+
+    private String buildHistoryS3Prefix(LocalDate fecha) {
+
+        if (fecha == null) {
+            return "";
+        }
+
+        return fecha.format(DATE_FOLDER_FORMAT) + "/";
+    }
+
+    private String normalizeTransportista(
+            String transportista) {
+
+        if (transportista == null
+                || transportista.isBlank()) {
+
+            return null;
+        }
+
+        return transportista.trim();
     }
 
     private DispatchGuideMessageDto buildRabbitMessage(
@@ -423,8 +460,18 @@ public class DispatchGuideServiceImpl implements DispatchGuideService {
 
         return bucketName != null
                 && !bucketName.isBlank()
+                && guide != null
                 && guide.getS3Key() != null
                 && !guide.getS3Key().isBlank();
+    }
+
+    private boolean existsInS3(DispatchGuide guide) {
+
+        return canCheckS3(guide)
+                && awsService.objectExists(
+                        bucketName,
+                        guide.getS3Key()
+                );
     }
 
     private String resolveContentType(String fileName) {
@@ -441,6 +488,16 @@ public class DispatchGuideServiceImpl implements DispatchGuideService {
     private DispatchGuideResponseDto toResponse(
             DispatchGuide guide) {
 
+        return toResponse(
+                guide,
+                guide.isUploadedToS3()
+        );
+    }
+
+    private DispatchGuideResponseDto toResponse(
+            DispatchGuide guide,
+            boolean uploadedToS3) {
+
         DispatchGuideResponseDto response =
                 new DispatchGuideResponseDto();
 
@@ -454,7 +511,7 @@ public class DispatchGuideServiceImpl implements DispatchGuideService {
         response.setFileName(guide.getFileName());
         response.setS3Key(guide.getS3Key());
         response.setEfsPath(guide.getEfsPath());
-        response.setUploadedToS3(guide.isUploadedToS3());
+        response.setUploadedToS3(uploadedToS3);
         response.setCreatedAt(guide.getCreatedAt());
         response.setUpdatedAt(guide.getUpdatedAt());
 
